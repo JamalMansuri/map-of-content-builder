@@ -185,7 +185,7 @@ def flow() -> str:
     return "".join(o)
 
 
-out = pathlib.Path("/Users/jamal/Projects/map-of-content-builder/assets")
+out = pathlib.Path(__file__).resolve().parent
 out.mkdir(parents=True, exist_ok=True)
 for name, fn in (("logo", logo), ("catch", catch), ("flow", flow)):
     svg = fn()
