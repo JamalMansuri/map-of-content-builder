@@ -1,0 +1,17 @@
+{
+  "corpus_slug": "demo-corpus",
+  "buckets": [
+    {
+      "name": "design_notes",
+      "source_type": "markdown-note",
+      "root": "sources",
+      "description": "Design notes, incident writeups, decision records and runbooks for one small software project.",
+      "include": [
+        "**/*.md"
+      ]
+    }
+  ],
+  "workstreams": [
+    "platform_reliability"
+  ]
+}

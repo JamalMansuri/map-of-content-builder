@@ -1,0 +1,437 @@
+# =============================================================================
+# default.profile.yaml — what "valid" means for one corpus.
+#
+# THIS FILE IS THE POINT OF THE TOOL. Every numeric threshold, tier list, token
+# bound, severity and vocabulary lives here and nowhere else. No `.py` in this
+# repo declares one. The mechanical proof is a grep over `scripts/*.py` for the
+# names below — it returns nothing.
+#
+# So: do not fork the code to change behaviour. Copy this file, edit it, and
+# pass it with `--profile`. A corpus whose rules cannot be stated in a file like
+# this one is a corpus whose rules are not stated at all.
+#
+#     python scripts/lint_corpus.py --corpus <ROOT> --profile profiles/default.profile.yaml
+#
+# Everything below is commented for a first-time reader. Delete the commentary
+# in your own copy; keep the keys.
+# =============================================================================
+
+profile_version: 1
+
+# `name` is what the report calls this ruleset. `corpus_id` names the corpus it
+# governs and is used for the default report directory (`reports/<corpus_id>/`).
+# When you copy this file per corpus, change both.
+name: default
+corpus_id: default
+
+description: >
+  Generic ruleset for a map-of-content corpus in the standard folder layout.
+  One profile can govern many corpora, so no root is hardcoded here; pass the
+  corpus with --corpus on every run.
+
+# No `root:` on purpose. `lint_corpus.py --corpus <ROOT>` supplies it, and with
+# neither present the run exits 2 rather than guessing which folder you meant.
+
+
+# -----------------------------------------------------------------------------
+# discovery — which files are pages, and therefore linted
+# -----------------------------------------------------------------------------
+discovery:
+  # Synthesis lives in 03_workstreams/. 01_sources/ is the source lake: canonical
+  # bytes, not pages. Linting the lake would report findings about material the
+  # tool has no business grading.
+  include:
+    - "03_workstreams/**/*.md"
+
+  exclude_dirs:
+    - "_spines"        # machine-written indexes, not pages
+    - "01_sources"     # the source lake
+    - "02_codebases"   # no extractor ships for these; nothing reads them yet
+    - "05_exports"     # generated artifacts, never the source of truth
+    - "90_system"      # scaffolding, temp, run state
+    - ".git"
+    - ".obsidian"
+    - ".trash"
+
+  # Files and folders whose name starts with one of these are skipped outright.
+  exclude_prefix: ["_", "."]
+
+  # THE COERCION TRAP, and why this key is written the way it is.
+  # A YAML loader returns the boolean True for `ai-generated: true`, not the
+  # string "true". A gate implemented as `str(value) == "true"` therefore matches
+  # nothing, discovers zero pages, and reports a vacuous pass. The linter
+  # canonicalises both sides before comparing, and separately exits 2 whenever
+  # discovery finds zero pages — so this failure cannot be silent. Every file
+  # this gate excludes is named in the report.
+  #
+  # Effect here: only machine-drafted pages are audited. Hand-written briefs
+  # carry `ai-generated: false` and are excluded (and listed as excluded).
+  gate_fields:
+    ai-generated: true
+
+
+# -----------------------------------------------------------------------------
+# types — the page vocabulary
+#
+# Two types ship. Add one only when something in your pipeline actually WRITES
+# it; a type with no producer is a reserved-for-future field.
+# -----------------------------------------------------------------------------
+types:
+
+  # A page asserting a relationship BETWEEN sources. This is what makes a map of
+  # content a map rather than an index: an index says where a record is, a
+  # relationship page says what two records mean together that neither means
+  # alone.
+  relationship:
+    # These are exactly the keys the shipped relationship template writes, so a
+    # page scaffolded from that template lints clean on the first run. Add more
+    # once your own pipeline writes them — e.g.:
+    #   - page_id
+    #   - relation_kind
+    #   - entities
+    #   - summary
+    required:
+      - type
+      - title
+      - workstream
+      - relates
+      - tags
+      - status
+      - created
+      - updated
+      - ai-generated
+      - manual_edit
+
+    # Which frontmatter key holds the source list. Entries may be plain ids or
+    # mappings with a `record_id` key; both are read.
+    sources_field: relates
+
+    # A "relationship" grounded in one source is a summary wearing a
+    # relationship's frontmatter. Two is the floor, counted over DISTINCT ids —
+    # one record listed twice is one record.
+    min_sources: 2
+
+    # Every claim-bearing body line must carry an inline citation. See `claims:`.
+    cite_every_claim: true
+
+  # A page carrying claims lifted out of a single source.
+  source-note:
+    required:
+      - type
+      - title
+      - workstream
+      - record_ids
+      - tags
+      - status
+      - created
+      - updated
+      - ai-generated
+    sources_field: record_ids
+    min_sources: 1
+    cite_every_claim: true
+
+
+# -----------------------------------------------------------------------------
+# status — two values, not three
+#
+# Pages are drafts until a human reviews them. Add `stable`, `archived` or
+# whatever your workflow needs, but only once something in the workflow sets it.
+# A value nothing ever writes is a value that will drift.
+# -----------------------------------------------------------------------------
+status_values: [draft, reviewed]
+
+
+# -----------------------------------------------------------------------------
+# placeholders — literal markers the templates ship with
+#
+# A page still carrying one was never finished. Matched as plain substrings
+# anywhere in the file, frontmatter included.
+# -----------------------------------------------------------------------------
+placeholders:
+  - "[FILL IN"
+  - "<<<HUMAN"
+  - "<<<placeholder"
+  - "{{ "
+  - "TKTK"
+
+
+# -----------------------------------------------------------------------------
+# claims — the per-line citation gate
+#
+# On a type with `cite_every_claim: true`, any body line long enough to assert
+# something must carry an inline citation. Frontmatter, fenced code, headings,
+# blank lines and HTML comments are never counted.
+# -----------------------------------------------------------------------------
+claims:
+  # Word count above which a line counts as assertive. Raise it HERE, never in
+  # code, if ordinary setup sentences start getting flagged. The false-positive
+  # mode is long non-assertive prose; that is the knob for it.
+  min_words: 6
+
+  # Sections that are exempt by nature. `## Sources` is a link list, `## Updates`
+  # is a change log, `## Open questions` is addressed to a human and cites
+  # nothing by design. Match the heading text exactly, including the `##`.
+  exempt_sections:
+    - "## Sources"
+    - "## Updates"
+    - "## Open questions"
+    - "## Operator note"
+
+
+# -----------------------------------------------------------------------------
+# trace — the provenance gate, and the reason this tool exists
+# -----------------------------------------------------------------------------
+trace:
+  # Inline citation grammar, as it appears in prose:  [src:<source_id>|<locator>]
+  # The named groups are load-bearing; keep them if you change the syntax.
+  inline_re: '\[src:(?P<source_id>[^\|\]]+)\|(?P<locator>[^\]]*)\]'
+
+  # `comment_re` is DELIBERATELY ABSENT. The library's default is the canonical
+  # trace grammar:
+  #     <!-- trace: <source_id> | <ordinal> | <locator> | raw: "<verbatim span>" -->
+  # It is pipe-delimited rather than comma-delimited so an id may contain ':'
+  # and '/'. Restating it here would be a second copy of one grammar, which is
+  # exactly how a config drifts away from the code it configures.
+  #
+  # `block_anchor_re` is also absent on purpose: setting it to null would hand
+  # None to the regex engine. Omit the key and the library default applies.
+
+  # ===========================================================================
+  # ONLY these two tiers may ever return VERIFIED.
+  #
+  #   exact       the quoted span occurs byte-for-byte in the cited source
+  #   normalized  it occurs after case-folding and whitespace/punctuation
+  #               normalisation (the ONE normalizer, applied to both sides)
+  #
+  # Fuzzy, prefix and trigram matching exist in this tool only as a HINT
+  # attached to a FAILING finding — "the first 8 words occur at offset N,
+  # likely a paraphrase". A hint never changes a verdict and never affects an
+  # exit code.
+  #
+  # Why so blunt: an earlier build ran a fuzzy ladder that fell through to a
+  # 3-word trigram, and it marked a fabricated quote VERIFIED off that trigram.
+  # A verifier that passes a fabricated quote is worse than no verifier — it
+  # launders the fabrication and puts a machine's stamp on it. Adding a tier to
+  # this list re-creates that failure.
+  # ===========================================================================
+  tiers: [exact, normalized]
+
+  # Snippet length, in NORMALIZED tokens (words after normalisation).
+  #
+  # Below ~6 tokens, accidental matches inside a long source become plausible and
+  # a "verified" quote proves nothing. Above ~40, ordinary transcription and
+  # formatting variance breaks matches that should have held. A snippet outside
+  # the band is unverifiable BY CONSTRUCTION, so it is reported as malformed
+  # rather than silently passed.
+  #
+  # Widen it if your sources are long-form prose; narrow it if they are terse.
+  snippet_tokens: [6, 40]
+
+  # Locator kinds are sigil-prefixed:
+  #     T:<HH:MM:SS>      timestamp       (transcripts, recordings)
+  #     H:<heading-slug>  heading anchor  (prose, markdown)
+  #     P:<n>             paragraph index (unstructured text, OCR)
+  #     L:<n>             line            (last resort — least stable)
+  #     K:<dotted.key>    key path        (JSON / YAML payloads)
+  #     (empty)           the whole artifact — only for short files
+  #
+  # Empty default means a bare locator with no sigil is MALFORMED rather than
+  # silently reinterpreted. Set this to "T" only when auditing a legacy corpus
+  # whose locators are bare timestamps.
+  locator_kind_default: ""
+
+
+# -----------------------------------------------------------------------------
+# substrate — how a citation id becomes bytes on disk
+# -----------------------------------------------------------------------------
+substrate:
+  # `record_field`: the citation id IS a record_id. Look it up in the index below
+  # and read `evidence_paths[0]`. One resolution path, no mode branch.
+  #
+  # The other supported kind is `id_registry_file`, for corpora that must keep
+  # real filenames out of their pages: the id is an opaque token joined through a
+  # registry JSON to a filename, resolved at read time.
+  kind: record_field
+  index: "01_sources/_spines/project_records.jsonl"
+  key_field: record_id
+
+  # Evidence paths may be absolute, or relative to the corpus root. Relative is
+  # what makes a corpus portable between machines; the resolver anchors them to
+  # the corpus root, so `sources/note.md` resolves wherever the corpus is copied.
+
+  # Roots whose FILENAMES carry information that must never be serialised into a
+  # page (real names, client identifiers). Declare them here and the tool refuses
+  # to write any path derived from them, and sweeps every artifact afterwards:
+  #
+  #   roots:
+  #     - path: "~/corpora/interviews"
+  #       path_is_sensitive: true
+  #
+  # With none declared there is nothing to scan for, and the NAME_LEAK check
+  # reports itself as not run, with that reason. It never silently passes.
+  roots: []
+
+
+# -----------------------------------------------------------------------------
+# index — the record spine, and its agreement with the disk
+# -----------------------------------------------------------------------------
+index:
+  path: "01_sources/_spines/project_records.jsonl"
+  key_field: record_id
+
+  # Directories whose files should each be accounted for by some record. Files
+  # here that appear in no record's `evidence_paths` are reported as orphans —
+  # usually meaning "rebuild the index before trusting this report".
+  source_dirs: ["01_sources"]
+
+  # Bound the orphan sweep. Without a glob, every stray file in a source
+  # directory becomes a finding.
+  source_glob: "*/raw/**/*"
+
+
+# -----------------------------------------------------------------------------
+# temporal — staleness
+# -----------------------------------------------------------------------------
+temporal:
+  updated_field: updated
+
+  # Advisory forever. An evergreen page that is correct and simply old fires
+  # this, and promoting it to a warning trains the reader to mute the whole
+  # report. Remove the key entirely to skip the check.
+  staleness_days: 90
+
+
+# -----------------------------------------------------------------------------
+# semantic — the LLM-side queue
+#
+# The tool makes NO semantic judgement. It selects candidate page pairs
+# mechanically, by shared frontmatter keys, and writes them to a queue with a
+# fixed taxonomy for a human or a model to judge. Nothing in that queue is a
+# finding.
+# -----------------------------------------------------------------------------
+semantic:
+  cluster_on: [workstream, tags]
+  min_overlap: 2
+  max_pairs: 40
+
+
+# -----------------------------------------------------------------------------
+# report
+# -----------------------------------------------------------------------------
+report:
+  # null -> <repo>/reports/<corpus_id>/<run_id>.md. Set an absolute path to put
+  # reports somewhere else. Reports are additive; only `latest.md` is overwritten.
+  dir: null
+
+  # false -> the semantic queue is written beside the report, OUTSIDE the corpus.
+  # The tool reports; it never edits what it audits, and with this false it does
+  # not even add a file. Set true (plus queue_dir) only if you want the queue to
+  # live in the corpus's own system area — it is a NEW file there, never an edit
+  # to an audited page.
+  queue_in_corpus: false
+  queue_dir: "90_system/state"
+
+  # null -> list every finding. Set an integer to truncate long sections.
+  max_findings_per_check: null
+
+
+# =============================================================================
+# checks — severity per check, and an honest note on false positives
+#
+# TWO SEVERITIES DO THE REAL WORK, and collapsing them makes the report
+# unusable:
+#
+#   TRACE_ABSENT   (error)   the quoted snippet is NOT in the cited source
+#   TRACE_LOCATION (warning) it IS in the source, just not where the page says
+#
+# The first is a provenance failure. The second is citation imprecision. Report
+# them at one severity and a reader who sees a wall of findings mutes all of
+# them, including the ones that mattered.
+#
+# A profile may LOWER a severity. It may never raise one above the ceiling the
+# code declares — that is what stops an advisory check being promoted to an
+# error by a config edit.
+#
+# `fp_rate` is your measured false-positive rate for this corpus. Ship a check
+# only when you can state one. The notes below are generic starting points;
+# replace them with your own numbers after the first real audit.
+# =============================================================================
+checks:
+
+  # ---- frontmatter shape ----------------------------------------------------
+  FM_ABSENT:
+    severity: error
+    fp_rate: "0% by construction on a correct profile — a hit means the file is not meant to be a page, which indicts `discovery:`, not the file"
+  FM_TYPE:
+    severity: error
+    fp_rate: "measure by the hit RATE: a rate near 100% means this profile's `types:` vocabulary is wrong for the corpus, not that every page is broken"
+  FM_REQUIRED:
+    severity: error
+    fp_rate: "low by construction — derive each `required:` list from the corpus's own pages before writing it. Suppressed on any page where FM_TYPE already fired, which is what stops the cascade"
+  FM_STATUS:
+    severity: error
+    fp_rate: "0% by construction — comparison is case-insensitive and boolean-safe, so YAML coercion is not a false-positive source"
+  FM_PLACEHOLDER:
+    severity: error
+    fp_rate: "only a page that legitimately QUOTES a marker can be a false positive; rare enough to enumerate by hand"
+
+  # ---- citation resolution --------------------------------------------------
+  CITE_UNRESOLVED:
+    severity: error
+    fp_rate: "0% by construction — resolution is a dictionary lookup against the index, not a heuristic. A non-zero rate means the index is stale, which is itself the finding"
+
+  # ---- trace verification ---------------------------------------------------
+  TRACE_ABSENT:
+    severity: error
+    # The number worth knowing: on one real 39-page corpus of AI-drafted pages,
+    # 116 of 448 quoted snippets did not appear verbatim in the source each was
+    # cited to. Roughly a quarter. Hand-checking a sample showed the dominant
+    # cause is paraphrase presented as a quotation — the underlying claims were
+    # substantively true; the quotation marks were not earned. That is why this
+    # finding says "this QUOTATION could not be confirmed" and never "this claim
+    # is false", and why the report avoids the word hallucination entirely.
+    fp_rate: "0 false positives in the samples hand-checked so far — every flagged snippet was genuinely non-verbatim. Read the finding narrowly: it is a statement about the quotation, not about the claim"
+  TRACE_LOCATION:
+    severity: warning
+    fp_rate: "the COUNT moves with the locator window definition, so it is reported and never asserted; hits are typically an adjacent section or an adjacent speaking turn"
+  TRACE_DRIFT:
+    severity: warning
+    fp_rate: "any whitespace- or encoding-normalising touch of a source fires it, which is why the message says the SOURCE changed rather than that the page is wrong"
+  TRACE_MALFORMED:
+    severity: warning
+    fp_rate: "0% by construction — an ellipsis inside a quote, an out-of-band token count and an unparseable locator are all unambiguous"
+  TRACE_SOURCE_MISSING:
+    severity: error
+    fp_rate: "0% by construction — a dictionary lookup plus a filesystem existence test"
+
+  # ---- relationship-page shape ----------------------------------------------
+  SRC_MIN:
+    severity: error
+    fp_rate: "0% by construction — set cardinality against a declared floor"
+  CLAIM_UNCITED:
+    severity: error
+    fp_rate: "long non-assertive lines (setup sentences, list preambles) are the real false-positive mode; tune with `claims.min_words` and `claims.exempt_sections`, never in code"
+
+  # ---- index vs disk --------------------------------------------------------
+  INDEX_MISSING_FILE:
+    severity: error
+    fp_rate: "0% by construction — a filesystem existence test"
+  INDEX_ORPHAN_FILE:
+    severity: warning
+    fp_rate: "fires on any incidental file inside a source directory; bounded by `index.source_glob`, and measured by listing the hits"
+
+  # ---- safety and time ------------------------------------------------------
+  NAME_LEAK:
+    severity: error
+    fp_rate: "form-dependent, which is why the check is split three ways. Whole-path-component and filename matching are near-0%. Bare substring matching is advisory only: on one corpus whose sensitive directory was named with an ordinary English word, every substring hit was a false positive"
+  STALE:
+    severity: advisory
+    fp_rate: "threshold-dependent by nature. If every page shares one `updated` date the check fires 0% or 100% with nothing in between. Advisory forever"
+
+  # ---- LLM-side, interface only ---------------------------------------------
+  SEM_DUPLICATE:
+    severity: advisory
+    fp_rate: "not applicable — no verdict is produced by this tool, so no verdict can be wrong. The pair SELECTION rate is reported instead"
+  SEM_CONTRADICTION:
+    severity: advisory
+    fp_rate: "not applicable — see SEM_DUPLICATE. The taxonomy is fixed to five kinds because open-ended contradiction detection proved unreliable"
