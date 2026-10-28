@@ -62,6 +62,22 @@ Only two tiers ever return VERIFIED — `exact` and `normalized` (NFKD + casefol
 - **It does not fix anything.** No `--fix`, no suggested patch. It reports; the edit stays a human decision.
 - **It is not a RAG evaluator.** Exact string verification against a named file, not LLM-as-judge scoring or semantic similarity.
 
+## Use it with Claude Code
+
+`SKILL.md` at the repo root is the agent layer: mode routing, the exact commands, the trace rules
+and the refusal conditions. Claude does not discover it from a clone — skills are loaded from
+`~/.claude/skills/<name>/SKILL.md`. Point that at the repo once:
+
+```bash
+ln -s "$(pwd)" ~/.claude/skills/map-of-content-builder
+export MOC="$(pwd)"            # SKILL.md resolves every script through $MOC
+```
+
+Then "build a MoC over this folder" or "audit the corpus" routes to the right mode. The scripts
+still run locally and make no model calls, so the agent is doing judgement work only: naming
+buckets, writing gists, drafting relationship pages, and reading the lint report for the semantic
+checks the linter deliberately refuses to decide.
+
 ## Tune it
 
 Every threshold, tier list, token bound, severity and vocabulary lives in [`profiles/default.profile.yaml`](profiles/default.profile.yaml) and in no `.py` file. Copy it, edit it, pass it with `--profile`. A profile may lower a severity; it can never raise one above the ceiling the code declares.
